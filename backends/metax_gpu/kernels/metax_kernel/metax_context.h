@@ -11,8 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#ifndef BACKENDS_METAX_GPU_KERNELS_METAX_CONTEXT_H_
-#define BACKENDS_METAX_GPU_KERNELS_METAX_CONTEXT_H_
+#ifndef BACKENDS_METAX_GPU_KERNELS_METAX_KERNEL_METAX_CONTEXT_H_
+#define BACKENDS_METAX_GPU_KERNELS_METAX_KERNEL_METAX_CONTEXT_H_
 #include <array>
 #include <functional>
 #include <mutex>
@@ -27,11 +27,11 @@
 #include "paddle/phi/core/attribute.h"
 #include "paddle/phi/core/device_context.h"
 
-using blasLtHandle_t = struct mcblasLtContext*;
-
-blasLtHandle_t GetBlasLtHandle();
+cublasLtHandle_t GetBlasLtHandle();
 
 namespace phi {
+bool AllowTF32Cublas();
+bool AllowTF32Cudnn();
 class DnnWorkspaceHandle {
  public:
   inline DnnWorkspaceHandle(Allocator* allocator, gpuStream_t stream)
@@ -128,7 +128,6 @@ inline void InitCusolverDnHandle(cusolverDnHandle_t* handle,
   }
 }
 
-bool AllowTF32Cudnn();
 inline cusolverDnHandle_t GetCusolverDnHandle(gpuStream_t stream, Place place) {
   std::call_once(flag_cusolver_dn_, [&]() {
     if (!cusolver_dn_handle_) {
@@ -160,4 +159,4 @@ inline DnnWorkspaceHandle GetDnnWorkspace(Allocator* alloactor,
   return DnnWorkspaceHandle(alloactor, stream);
 }
 }  // namespace phi
-#endif  // BACKENDS_METAX_GPU_KERNELS_METAX_CONTEXT_H_
+#endif  // BACKENDS_METAX_GPU_KERNELS_METAX_KERNEL_METAX_CONTEXT_H_

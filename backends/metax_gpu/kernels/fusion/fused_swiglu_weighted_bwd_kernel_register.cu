@@ -13,11 +13,18 @@
 // limitations under the License.
 
 #include "paddle/phi/core/kernel_registry.h"
-#include "paddle/phi/kernels/grid_sample_grad_kernel.h"
+#include "paddle/phi/kernels/fusion/gpu/fused_swiglu_weighted_bwd_kernel.cu"  //NOLINT
 
-PD_CUSTOM_KERNEL_REGISTER(grid_sample_grad,
+PD_CUSTOM_KERNEL_REGISTER(fused_swiglu_weighted_bwd,
                           metax_gpu,
                           ALL_LAYOUT,
-                          phi::GridSampleGradKernel,
+                          phi::FusedSwigluWeightedBwdKernel,
                           float,
-                          double) {}
+                          double,
+                          int,
+                          int64_t,
+                          phi::bfloat16) {
+  kernel->OutputAt(0).SetDataType(phi::DataType::BFLOAT16);
+  kernel->OutputAt(1).SetDataType(phi::DataType::FLOAT32);
+  kernel->OutputAt(2).SetDataType(phi::DataType::BFLOAT16);
+}
