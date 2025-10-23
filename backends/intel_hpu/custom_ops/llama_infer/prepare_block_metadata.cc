@@ -21,10 +21,11 @@
 #include "utils/utils.h"
 
 // retrun: amax and where(>0)
-std::tuple<int, int, std::vector<int>> get_max_and_where_nonzero(
+std::tuple<int, int, int, std::vector<int>> get_max_and_where_nonzero(
     int* seq_lens_encoder, int* seq_lens_decoder, const int elem_cnt) {
   int max_seq_len_without_context = 0;
   int max_seq_len_with_context = 0;
+  int max_context_len = 0;
   std::vector<int> valid_batch;
   for (int i = 0; i < elem_cnt; ++i) {
     if (seq_lens_encoder[i] > 0) {
@@ -33,14 +34,19 @@ std::tuple<int, int, std::vector<int>> get_max_and_where_nonzero(
         max_seq_len_without_context = seq_lens_encoder[i];
         max_seq_len_with_context = seq_lens_encoder[i];
       }
-
+      if (seq_lens_decoder[i] > max_context_len) {
+        max_context_len = seq_lens_decoder[i];
+      }
       if (seq_lens_decoder[i] > 0 && seq_lens_encoder[i] + seq_lens_decoder[i] >
                                          max_seq_len_with_context) {
         max_seq_len_with_context = seq_lens_encoder[i] + seq_lens_decoder[i];
       }
     }
   }
-  return {max_seq_len_without_context, max_seq_len_with_context, valid_batch};
+  return {max_seq_len_without_context,
+          max_seq_len_with_context,
+          max_context_len,
+          valid_batch};
 }
 
 // return: where(>0)
@@ -97,16 +103,22 @@ void pad_fill(const T* input_p,
 
 template <typename T>
 void pad_fill(const T* input_p,
+              const T* offsets,
               T* padded,
               std::vector<int> valid_batches,
               int input_linewidth,
-              int padded_linewidth) {
+              int padded_linewidth,
+              int max_context_len,
+              int block_size) {
   int copy_len = std::min(input_linewidth, padded_linewidth);
 #pragma omp parallel for num_threads(OMP_THREAD_NUM)
   for (int i = 0; i < static_cast<int>(valid_batches.size()); ++i) {
-    for (int j = 0; j < copy_len; ++j) {
+    for (int j = (max_context_len - offsets[valid_batches[i]]) / block_size,
+             k = 0;
+         j < copy_len && k < copy_len;
+         ++j, ++k) {
       padded[i * padded_linewidth + j] =
-          input_p[valid_batches[i] * input_linewidth + j];
+          input_p[valid_batches[i] * input_linewidth + k];
     }
   }
 }
@@ -209,6 +221,10 @@ std::vector<paddle::Tensor> PrepareBlockMetadata(
   const char* env_prefill_batch_step = std::getenv("BATCH_STEP_PREFILL");
   const int batch_step_prefill =
       env_prefill_batch_step ? std::atoi(env_prefill_batch_step) : 1;
+  const char* env_context_block_step =
+      std::getenv("CONTEXT_BLOCK_STEP_PREFILL");
+  const int context_block_step_prefill =
+      env_context_block_step ? std::atoi(env_context_block_step) : 1;
   const char* env_decode_batch_step = std::getenv("BATCH_STEP_DECODE");
   const int batch_step_decode =
       env_decode_batch_step ? std::atoi(env_decode_batch_step) : 4;
@@ -222,6 +238,7 @@ std::vector<paddle::Tensor> PrepareBlockMetadata(
 
   auto [max_enc_len_without_context,
         max_enc_len_with_context,
+        max_context_len,
         valid_batches_enc] =
       get_max_and_where_nonzero(
           const_cast<int*>(seq_lens_encoder_cpu.data<int>()),
@@ -288,6 +305,10 @@ std::vector<paddle::Tensor> PrepareBlockMetadata(
 
     int max_buckets_with_context =
         (max_enc_len_with_context + block_size - 1) / block_size;
+    max_buckets_with_context =
+        ((max_buckets_with_context + context_block_step_prefill - 1) /
+         context_block_step_prefill) *
+        context_block_step_prefill;
     int max_prompt_len_with_context = max_buckets_with_context * block_size;
 
     auto block_list_padded =
@@ -297,10 +318,13 @@ std::vector<paddle::Tensor> PrepareBlockMetadata(
                      paddle::CPUPlace());
     pad_fill<int32_t>(
         const_cast<int32_t*>(block_tables_cpu.data<int32_t>()),
+        const_cast<int32_t*>(seq_lens_decoder_cpu.data<int32_t>()),
         reinterpret_cast<int32_t*>(block_list_padded.data<int32_t>()),
         valid_batches_enc,
         max_blocks_each,
-        max_buckets_with_context);
+        max_buckets_with_context,
+        max_context_len,
+        block_size);
 
     auto block_list_hpu = custom_kernel::copy_tensor_wrapper(
         dev_ctx, block_list_padded, hpu_place);
